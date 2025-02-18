@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-User Virtual Wallet</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; text-align: center; }
+        input, select, button { margin: 10px; padding: 10px; width: 90%; max-width: 300px; }
+        .hidden { display: none; }
+        #wallet-container { max-width: 500px; margin: auto; padding: 20px; border: 1px solid #ccc; border-radius: 10px; }
+        #transactions { text-align: left; margin-top: 20px; }
+        canvas { max-width: 100%; }
+    </style>
+</head>
+<body>
+
+    <h2>Multi-User Virtual Wallet</h2>
+
+    <div id="auth">
+        <input type="text" id="username" placeholder="Enter Username"><br>
+        <input type="password" id="pin" placeholder="Enter PIN"><br>
+        <button onclick="register()">Register</button>
+        <button onclick="login()">Login</button>
+    </div>
+
+    <div id="wallet-container" class="hidden">
+        <h3>Balance: ₹<span id="balance">0.00</span></h3>
+
+        <input type="number" id="amount" placeholder="Amount">
+        <select id="category">
+            <option value="Groceries">Groceries</option>
+            <option value="Entertainment">Entertainment</option>
+            <option value="Rent">Rent</option>
+            <option value="Bills">Electricity/Water Bills</option>
+            <option value="Dining">Dining/Restaurants</option>
+            <option value="Transport">Transport (Bus, Train, Taxi)</option>
+            <option value="Shopping">Shopping</option>
+            <option value="Investment">Investment (Stocks, Mutual Funds)</option>
+            <option value="UPI Payment">UPI Payment</option>
+            <option value="Salary">Salary (Deposit)</option>
+        </select>
+        <button onclick="addTransaction()">Add Transaction</button>
+
+        <div id="transactions">
+            <h4>Transaction History:</h4>
+            <ul id="transaction-list"></ul>
+        </div>
+
+        <canvas id="spendingChart"></canvas>
+        <br>
+        <button onclick="logout()">Logout</button>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let chartInstance = null;
+
+        function register() {
+            let user = document.getElementById("username").value.trim();
+            let pin = document.getElementById("pin").value.trim();
+
+            if (!user || !pin) {
+                alert("Please enter a valid username and PIN.");
+                return;
+            }
+
+            let users = JSON.parse(localStorage.getItem("users")) || {};
+
+            if (users[user]) {
+                alert("Username already exists. Try logging in.");
+                return;
+            }
+
+            let hashedPin = CryptoJS.SHA256(pin).toString();
+            users[user] = { pinHash: hashedPin, balance: 0, transactions: [] };
+            localStorage.setItem("users", JSON.stringify(users));
+
+            alert("Registration successful! You can now log in.");
+        }
+
+        function login() {
+            let user = document.getElementById("username").value.trim();
+            let pin = document.getElementById("pin").value.trim();
+            let users = JSON.parse(localStorage.getItem("users")) || {};
+
+            if (!users[user]) {
+                alert("User not found. Please register.");
+                return;
+            }
+
+            let enteredPinHash = CryptoJS.SHA256(pin).toString();
+            if (users[user].pinHash !== enteredPinHash) {
+                alert("Incorrect PIN.");
+                return;
+            }
+
+            currentUser = user;
+            localStorage.setItem("currentUser", currentUser);
+            document.getElementById("auth").classList.add("hidden");
+            document.getElementById("wallet-container").classList.remove("hidden");
+            loadWallet();
+        }
+
+        function logout() {
+            currentUser = null;
+            localStorage.removeItem("currentUser");
+            document.getElementById("auth").classList.remove("hidden");
+            document.getElementById("wallet-container").classList.add("hidden");
+        }
+
+        function addTransaction() {
+            if (!currentUser) return;
+
+            let amount = parseFloat(document.getElementById("amount").value);
+            let category = document.getElementById("category").value;
+
+            if (isNaN(amount) || amount <= 0) {
+                alert("Enter a valid amount!");
+                return;
+            }
+
+            let users = JSON.parse(localStorage.getItem("users"));
+            let userAccount = users[currentUser];
+
+            if (category === "Salary") {
+                userAccount.balance += amount;
+            } else {
+                userAccount.balance -= amount;
+            }
+
+            userAccount.transactions.push({ amount, category, date: new Date().toLocaleString() });
+            localStorage.setItem("users", JSON.stringify(users));
+
+            document.getElementById("balance").innerText = userAccount.balance.toFixed(2);
+            updateTransactionList();
+            updateChart();
+        }
+
+        function updateTransactionList() {
+            let transactionList = document.getElementById("transaction-list");
+            transactionList.innerHTML = "";
+            let users = JSON.parse(localStorage.getItem("users"));
+            let userTransactions = users[currentUser].transactions;
+
+            userTransactions.forEach(t => {
+                transactionList.innerHTML += `<li>${t.category}: ₹${t.amount.toFixed(2)}</li>`;
+            });
+        }
+
+        function updateChart() {
+            let users = JSON.parse(localStorage.getItem("users"));
+            let userTransactions = users[currentUser].transactions;
+
+            let categoryTotals = {};
+            userTransactions.forEach(t => {
+                if (t.category !== "Salary") {
+                    categoryTotals[t.category] = (categoryTotals[t.category] || 0) + t.amount;
+                }
+            });
+
+            let labels = Object.keys(categoryTotals);
+            let data = Object.values(categoryTotals);
+
+            if (chartInstance) chartInstance.destroy();
+
+            let ctx = document.getElementById("spendingChart").getContext("2d");
+            chartInstance = new Chart(ctx, {
+                type: "pie",
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ["red", "blue", "green", "yellow", "purple", "orange", "cyan", "pink"]
+                    }]
+                },
+                options: {
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function (tooltipItem) {
+                                    let total = data.reduce((sum, val) => sum + val, 0);
+                                    let value = tooltipItem.raw;
+                                    let percentage = ((value / total) * 100).toFixed(2);
+                                    return `${tooltipItem.label}: ₹${value} (${percentage}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function loadWallet() {
+            let users = JSON.parse(localStorage.getItem("users"));
+            let userAccount = users[currentUser];
+
+            document.getElementById("balance").innerText = userAccount.balance.toFixed(2);
+            updateTransactionList();
+            updateChart();
+        }
+
+        currentUser = localStorage.getItem("currentUser");
+        if (currentUser) login();
+    </script>
+
+</body>
+</html>
